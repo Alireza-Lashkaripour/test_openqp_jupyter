@@ -1,0 +1,109 @@
+FROM openqp/openqp:v1.0
+
+WORKDIR /opt/openqp-jupyter
+
+USER root
+
+RUN apt-get update && \
+    apt-get install -y \
+    python3 \
+    python3-pip \
+    && pip3 install \
+    jupyter \
+    numpy \
+    matplotlib \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN echo '#!/usr/bin/env python3\n\
+import sys\n\
+import subprocess\n\
+import os\n\
+\n\
+def run_openqp():\n\
+    if len(sys.argv) != 2:\n\
+        print("Usage: openqp <input_file>")\n\
+        sys.exit(1)\n\
+\n\
+    input_file = sys.argv[1]\n\
+    if not os.path.exists(input_file):\n\
+        print(f"Error: Input file {input_file} not found")\n\
+        sys.exit(1)\n\
+\n\
+    try:\n\
+        result = subprocess.run(\n\
+            ["/usr/local/bin/openqp.bin", input_file],\n\
+            check=True,\n\
+            stdout=subprocess.PIPE,\n\
+            stderr=subprocess.PIPE,\n\
+            text=True\n\
+        )\n\
+        print(result.stdout)\n\
+        if result.stderr:\n\
+            print("Errors:", result.stderr, file=sys.stderr)\n\
+    except subprocess.CalledProcessError as e:\n\
+        print(f"Error running OpenQP: {e}", file=sys.stderr)\n\
+        print("Output:", e.output)\n\
+        print("Errors:", e.stderr, file=sys.stderr)\n\
+        sys.exit(e.returncode)\n\
+    except Exception as e:\n\
+        print(f"Unexpected error: {e}", file=sys.stderr)\n\
+        sys.exit(1)\n\
+\n\
+if __name__ == "__main__":\n\
+    run_openqp()' > /usr/local/bin/openqp_wrapper.py
+
+RUN echo '#!/usr/bin/env python3\n\
+import sys\n\
+import subprocess\n\
+import os\n\
+import json\n\
+\n\
+def run_openqp_notebook(input_data):\n\
+    with open("input.dat", "w") as f:\n\
+        f.write(input_data)\n\
+    \n\
+    try:\n\
+        result = subprocess.run(\n\
+            ["/usr/local/bin/openqp.bin", "input.dat"],\n\
+            check=True,\n\
+            stdout=subprocess.PIPE,\n\
+            stderr=subprocess.PIPE,\n\
+            text=True\n\
+        )\n\
+        return {\n\
+            "stdout": result.stdout,\n\
+            "stderr": result.stderr\n\
+        }\n\
+    except subprocess.CalledProcessError as e:\n\
+        return {\n\
+            "error": str(e),\n\
+            "output": e.output,\n\
+            "stderr": e.stderr\n\
+        }\n\
+\n\
+if __name__ == "__main__":\n\
+    input_data = sys.stdin.read()\n\
+    result = run_openqp_notebook(input_data)\n\
+    print(json.dumps(result))' > /usr/local/bin/openqp_notebook.py
+
+RUN mv /usr/local/bin/openqp /usr/local/bin/openqp.bin
+
+RUN echo '#!/bin/bash\n\
+python3 /usr/local/bin/openqp_wrapper.py "$@"' > /usr/local/bin/openqp
+
+
+RUN chmod +x /usr/local/bin/openqp.bin \
+    && chmod +x /usr/local/bin/openqp \
+    && chmod +x /usr/local/bin/openqp_wrapper.py \
+    && chmod +x /usr/local/bin/openqp_notebook.py
+
+RUN mkdir -p /root/.jupyter
+RUN echo "c.NotebookApp.allow_root = True" >> /root/.jupyter/jupyter_notebook_config.py
+RUN echo "c.NotebookApp.ip = '0.0.0.0'" >> /root/.jupyter/jupyter_notebook_config.py
+RUN echo "c.NotebookApp.port = 8888" >> /root/.jupyter/jupyter_notebook_config.py
+RUN echo "c.NotebookApp.open_browser = False" >> /root/.jupyter/jupyter_notebook_config.py
+
+EXPOSE 8888
+
+ENTRYPOINT ["jupyter", "notebook", "--no-browser", "--allow-root"]
